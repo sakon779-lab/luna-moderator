@@ -59,11 +59,18 @@ class GameEngine:
         print(f"\n✅ {message}")
 
     def identify_players_for_role(self, player_ids: list[str], identified_role: Role):
-        """
-        รับค่าจาก Hardware: ระบุกลุ่มผู้เล่นที่ลืมตาขึ้นมาในเทิร์นของบทบาทนั้นๆ
-        """
+        """รับค่าจาก Hardware: ระบุกลุ่มผู้เล่นที่ลืมตาขึ้นมาในเทิร์นของบทบาทนั้นๆ"""
         if self.state.phase != GamePhase.NIGHT or self.state.current_turn != 1:
             raise ValueError("❌ การระบุตัวตนทำได้เฉพาะในคืนแรก")
+
+        # Edge Case 1: ถ้า Array ว่างมา ให้ Return ออกไปเลย ไม่ต้องทำอะไร
+        if not player_ids:
+            return
+
+        # Edge Case 3: เช็คโควต้าก่อนทำงาน
+        quota_left = self.expected_roles.count(identified_role)
+        if len(player_ids) > quota_left:
+            raise ValueError(f"❌ บทบาท {identified_role.value} ครบตามจำนวนหรือไม่มีในเกมรอบนี้แล้ว (โควต้า: {quota_left}, แต่กล้องส่งมา: {len(player_ids)})")
 
         for p_id in player_ids:
             if p_id not in self.state.players:
@@ -71,9 +78,9 @@ class GameEngine:
             
             player = self.state.players[p_id]
             
-            # ตรวจสอบว่ายังมีบทบาทนี้เหลืออยู่ในโควต้าของเกมรอบนี้ไหม
-            if identified_role not in self.expected_roles:
-                raise ValueError(f"❌ บทบาท {identified_role.value} ครบตามจำนวนหรือไม่มีในเกมรอบนี้แล้ว")
+            # Edge Case 4: ป้องกันการระบุ Role ซ้ำซ้อน
+            if player.role != Role.UNASSIGNED:
+                raise ValueError(f"❌ ผู้เล่น {player.name} ถูกระบุบทบาทไปแล้วว่าเป็น {player.role.value}")
             
             player.role = identified_role
             self.expected_roles.remove(identified_role) # หักออกจากโควต้า
@@ -170,7 +177,7 @@ if __name__ == "__main__":
         
         # สมมติว่า AI พูด "Seer ลืมตา" และกล้องตรวจจับ P03 ได้
         engine.identify_players_for_role(["P03"], Role.SEER)
-        
+         
         # เมื่อเรียกครบทุก Role แล้ว ให้ระบบจัดการคนที่เหลือให้เป็นชาวบ้าน
         engine.conclude_first_night_identification()
         
