@@ -1,5 +1,5 @@
 import random
-from src.core.models import GameState, Player, Role, GamePhase
+from src.core.models import GameState, Player, Role, GamePhase, NightActionState
 
 # ==========================================
 # Sub-task 2: Role Configuration & Balancing Matrix
