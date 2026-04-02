@@ -35,37 +35,68 @@ class GameEngine:
     # Sub-task 3 & 4: Start Game & Assign Roles
     # ==========================================
     def start_game(self):
-        """ฟังก์ชันตรวจสอบเงื่อนไข แจกไพ่ และเริ่มเกม"""
-        
-        # 1. Validation (ตรวจสอบเงื่อนไขก่อนเริ่มเกม)
+        """เริ่มเกม: ทุกคนเป็น Unassigned รอให้ Hardware ระบุตัวตนในคืนแรก"""
         if self.state.phase != GamePhase.LOBBY:
-            raise ValueError("❌ เกมกำลังดำเนินอยู่ ไม่สามารถกดเริ่มซ้ำได้")
+            raise ValueError("❌ เกมกำลังดำเนินอยู่")
         
         player_count = len(self.state.players)
-        if player_count < 5:
-            raise ValueError(f"❌ ผู้เล่นไม่พอ! ต้องการอย่างน้อย 5 คน (ตอนนี้มี {player_count} คน)")
         if player_count not in ROLE_MATRIX:
-            raise ValueError(f"❌ ยังไม่มี Config สัดส่วนบทบาทสำหรับผู้เล่น {player_count} คน")
+            raise ValueError(f"❌ ผู้เล่น {player_count} คน ไม่ตรงกับกติกา")
 
-        # 2. Get Role Config
-        roles_to_assign = ROLE_MATRIX[player_count].copy()
+        # 1. บันทึกว่าเกมนี้มี Role อะไรที่ต้องหาบ้าง (แต่ยังไม่รู้ว่าใครเป็นใคร)
+        self.expected_roles = ROLE_MATRIX[player_count].copy()
         
-        # 3. Shuffle & Assign (สุ่มแจกไพ่)
-        random.shuffle(roles_to_assign) # สลับไพ่
-        
-        # เรียงลำดับผู้เล่นตามที่นั่งก่อนแจก เพื่อความเป็นระเบียบ
-        sorted_players = sorted(self.state.players.values(), key=lambda p: p.seat_index)
-        
-        for i, player in enumerate(sorted_players):
-            player.role = roles_to_assign[i]
-        
-        # 4. State Transition (อัปเดตสถานะเกมเป็นกลางคืน)
+        # 2. ทุกคนเริ่มต้นด้วย UNASSIGNED 
+        for player in self.state.players.values():
+            player.role = Role.UNASSIGNED
+
+        # 3. เข้าสู่ Night 1 (ช่วงเวลา Identify ตัวตน)
         self.state.phase = GamePhase.NIGHT
         self.state.current_turn = 1
-        self.state.history_log.append("Game started. Roles assigned. Entering Night 1.")
         
-        print("\n✅ Game Started Successfully!")
-        print(f"🌙 Phase changed to: {self.state.phase.value} (Turn {self.state.current_turn})")
+        message = "เริ่มเกม: เข้าสู่คืนแรก AI Moderator ขอให้ทุกคนหลับตา..."
+        self.state.history_log.append(message)
+        print(f"\n✅ {message}")
+
+    def identify_players_for_role(self, player_ids: list[str], identified_role: Role):
+        """
+        รับค่าจาก Hardware: ระบุกลุ่มผู้เล่นที่ลืมตาขึ้นมาในเทิร์นของบทบาทนั้นๆ
+        """
+        if self.state.phase != GamePhase.NIGHT or self.state.current_turn != 1:
+            raise ValueError("❌ การระบุตัวตนทำได้เฉพาะในคืนแรก")
+
+        for p_id in player_ids:
+            if p_id not in self.state.players:
+                raise ValueError(f"❌ ไม่พบรหัสผู้เล่น {p_id}")
+            
+            player = self.state.players[p_id]
+            
+            # ตรวจสอบว่ายังมีบทบาทนี้เหลืออยู่ในโควต้าของเกมรอบนี้ไหม
+            if identified_role not in self.expected_roles:
+                raise ValueError(f"❌ บทบาท {identified_role.value} ครบตามจำนวนหรือไม่มีในเกมรอบนี้แล้ว")
+            
+            player.role = identified_role
+            self.expected_roles.remove(identified_role) # หักออกจากโควต้า
+            print(f"👁️ Hardware Detect: {player.name} -> บันทึกเป็น {identified_role.value}")
+
+    def get_pending_roles(self):
+        """เช็คว่าเหลือบทบาทไหนบ้างที่ AI ยังหาตัวไม่เจอ (ยกเว้น Villager)"""
+        # กรองเอาแค่บทบาทพิเศษที่ยังเหลือใน expected_roles
+        special_roles = [r.value for r in self.expected_roles if r != Role.VILLAGER]
+        return list(set(special_roles)) # คืนค่าแบบไม่ซ้ำชื่อ
+
+    def conclude_first_night_identification(self):
+        """
+        เรียกใช้เมื่อจบกระบวนการปลุกทุก Role (หมาป่า, Seer) ในคืนแรกแล้ว
+        คนที่เหลือที่ไม่ได้ลืมตาเลย จะถูกตั้งค่าเป็น Villager ทันที
+        """
+        villagers_count = 0
+        for player in self.state.players.values():
+            if player.role == Role.UNASSIGNED:
+                player.role = Role.VILLAGER
+                villagers_count += 1
+                
+        print(f"\n🌅 เช้าวันใหม่: ผู้เล่นที่เหลือ {villagers_count} คน ถูกระบุว่าเป็น Villager")
 
     def check_win_condition(self) -> tuple[bool, str]:
         """ตรวจสอบเงื่อนไขการชนะ"""
@@ -133,19 +164,28 @@ if __name__ == "__main__":
     try:
         engine.start_game()
         
-        print("\n🤫 Secret Role Reveal:")
+        print("\n--- 3. Night 1: Role Identification (Hardware Mock) ---")
+        # สมมติว่า AI พูด "หมาป่าลืมตา" และกล้องตรวจจับ P01 ได้
+        engine.identify_players_for_role(["P01"], Role.WEREWOLF)
+        
+        # สมมติว่า AI พูด "Seer ลืมตา" และกล้องตรวจจับ P03 ได้
+        engine.identify_players_for_role(["P03"], Role.SEER)
+        
+        # เมื่อเรียกครบทุก Role แล้ว ให้ระบบจัดการคนที่เหลือให้เป็นชาวบ้าน
+        engine.conclude_first_night_identification()
+        
+        print("\n🤫 Secret Role Reveal (After Identification):")
         werewolf_id = None
         villager_ids = []
         
         for p_id, p in engine.state.players.items():
             print(f"Seat {p.seat_index} ({p.name}): {p.role.value}")
-            # เก็บ ID หมาป่าและชาวบ้านไว้ใช้ทำ Mocking การฆ่า
             if p.role == Role.WEREWOLF:
                 werewolf_id = p_id
-            else:
+            elif p.role == Role.VILLAGER:
                 villager_ids.append(p_id)
                 
-        print("\n--- 3. Simulating Game Flow ---")
+        print("\n--- 4. Simulating Game Flow ---")
         # จำลองคืนที่ 1: หมาป่าฆ่าชาวบ้านคนแรก
         print("\n[Action] หมาป่าลงมือ...")
         engine.eliminate_player(villager_ids[0], "ถูกหมาป่ากัดในคืนที่ 1")
@@ -153,21 +193,21 @@ if __name__ == "__main__":
         # เปลี่ยนเป็นกลางวัน
         engine.next_phase() 
         
-        # จำลองกลางวันที่ 1: โหวตชาวบ้านอีกคนออก (โหวตพลาด)
+        # จำลองกลางวันที่ 1: โหวตชาวบ้านอีกคนออก
         print("\n[Action] โหวตตอนกลางวัน...")
         engine.eliminate_player(villager_ids[1], "ถูกโหวตออกจากหมู่บ้าน")
         
         # เปลี่ยนเป็นกลางคืนที่ 2
         engine.next_phase()
         
-        # จำลองคืนที่ 2: หมาป่าฆ่าชาวบ้านอีกคน (ตอนนี้หมาป่า 1, ชาวบ้าน 1 -> หมาป่าชนะ)
+        # จำลองคืนที่ 2: หมาป่าฆ่าชาวบ้านคนสุดท้าย
         print("\n[Action] หมาป่าลงมืออีกครั้ง...")
         engine.eliminate_player(villager_ids[2], "ถูกหมาป่ากัดในคืนที่ 2")
         
-        # เปลี่ยนเป็นกลางวัน (ระบบควรจะจับได้ว่าเกมจบแล้วและประกาศผล)
+        # เปลี่ยนเป็นกลางวัน (เกมจบ)
         engine.next_phase()
 
-        print("\n--- 4. Final Game State JSON (Ready for LLM) ---")
+        print("\n--- 5. Final Game State JSON (Ready for LLM) ---")
         print(engine.state.model_dump_json(indent=2))
         
     except Exception as e:
