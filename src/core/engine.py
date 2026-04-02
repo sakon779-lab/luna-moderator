@@ -152,6 +152,71 @@ class GameEngine:
         self.state.history_log.append(message)
         print(message)
 
+    # ==========================================
+    # [WM-14] Execute Night Action (รับค่าจาก Hardware)
+    # ==========================================
+    def execute_night_action(self, actor_role: Role, target_id: str):
+        """บันทึกการใช้สกิลของแต่ละบทบาท"""
+        if self.state.phase != GamePhase.NIGHT:
+            raise ValueError("❌ จะใช้สกิลได้เฉพาะตอนกลางคืนเท่านั้น")
+            
+        if target_id not in self.state.players:
+            raise ValueError(f"❌ ไม่พบเป้าหมายรหัส {target_id}")
+            
+        target_player = self.state.players[target_id]
+        if not target_player.is_alive:
+            raise ValueError(f"❌ ไม่สามารถเลือกคนที่ตายไปแล้วเป็นเป้าหมายได้")
+
+        # ตรวจสอบว่าบทบาทที่สั่งมา ยังมีชีวิตอยู่ในเกมหรือไม่
+        alive_actors = [p for p in self.state.players.values() if p.role == actor_role and p.is_alive]
+        if not alive_actors:
+            print(f"⚠️ {actor_role.value} ตายหมดแล้ว สกิลจะไม่มีผล")
+            return
+
+        # บันทึก Action ลงใน State ตามบทบาท
+        if actor_role == Role.WEREWOLF:
+            self.state.night_actions.kill_target = target_id
+            print(f"🐺 หมาป่าเลือกฆ่า: {target_player.name}")
+            
+        elif actor_role == Role.BODYGUARD:
+            self.state.night_actions.protect_target = target_id
+            print(f"🛡️ บอดี้การ์ดเลือกคุ้มครอง: {target_player.name}")
+            
+        elif actor_role == Role.SEER:
+            self.state.night_actions.checked_target = target_id
+            result = "ฝ่ายร้าย" if target_player.role == Role.WEREWOLF else "ฝ่ายดี"
+            print(f"👁️ Seer ส่อง {target_player.name} -> ผลลัพธ์: {result}")
+            return result # คืนค่าให้ Hardware/AI เพื่อบอก Seer
+
+    # ==========================================
+    # [WM-15] Night Resolution (สรุปผลตอนเช้า)
+    # ==========================================
+    def resolve_night(self):
+        """ประมวลผลลัพธ์ทั้งหมด และเตรียมเข้าสู่ช่วงกลางวัน"""
+        if self.state.phase != GamePhase.NIGHT:
+            return
+
+        actions = self.state.night_actions
+        victim_id = actions.kill_target
+        protector_id = actions.protect_target
+        
+        death_message = "เมื่อคืนที่ผ่านมา... ช่างสงบสุข ไม่มีใครเสียชีวิต"
+        
+        # Logic การฆ่า: ถ้ามีเป้าหมาย และเป้าหมายนั้นไม่มีคนคุ้มครอง
+        if victim_id:
+            if victim_id == protector_id:
+                death_message = f"🛡️ หมาป่าพยายามโจมตี {self.state.players[victim_id].name} แต่บอดี้การ์ดคุ้มครองไว้ได้!"
+            else:
+                victim = self.state.players[victim_id]
+                victim.is_alive = False
+                death_message = f"💀 เมื่อคืนนี้ {victim.name} ถูกหมาป่าขย้ำเสียชีวิต"
+        
+        self.state.history_log.append(death_message)
+        print(f"\n📢 ประกาศจาก Moderator: {death_message}")
+
+        # รีเซ็ต Action สำหรับคืนถัดไป และเปลี่ยนเฟส
+        self.state.night_actions = NightActionState()
+        self.next_phase() # ใช้ฟังก์ชันเปลี่ยนเฟสเดิมที่คุณกอล์ฟเขียนไว้
 
 # ==========================================
 # Mockup Testing: จำลองการทำงานเพื่อดูผลลัพธ์
@@ -182,39 +247,36 @@ if __name__ == "__main__":
         engine.conclude_first_night_identification()
         
         print("\n🤫 Secret Role Reveal (After Identification):")
-        werewolf_id = None
-        villager_ids = []
-        
         for p_id, p in engine.state.players.items():
             print(f"Seat {p.seat_index} ({p.name}): {p.role.value}")
-            if p.role == Role.WEREWOLF:
-                werewolf_id = p_id
-            elif p.role == Role.VILLAGER:
-                villager_ids.append(p_id)
                 
-        print("\n--- 4. Simulating Game Flow ---")
-        # จำลองคืนที่ 1: หมาป่าฆ่าชาวบ้านคนแรก
-        print("\n[Action] หมาป่าลงมือ...")
-        engine.eliminate_player(villager_ids[0], "ถูกหมาป่ากัดในคืนที่ 1")
+        print("\n--- 4. Simulating Night 1 Actions ---")
+        # หมาป่า (P01) เล็งกัด P02
+        engine.execute_night_action(Role.WEREWOLF, "P02")
+        # Seer (P03) ส่อง P04
+        engine.execute_night_action(Role.SEER, "P04")
         
-        # เปลี่ยนเป็นกลางวัน
-        engine.next_phase() 
+        # สรุปผลคืนที่ 1 (ระบบจะประกาศคนตาย และเปลี่ยน Phase เป็น DAY ให้เลย)
+        engine.resolve_night()
         
-        # จำลองกลางวันที่ 1: โหวตชาวบ้านอีกคนออก
+        print("\n--- 5. Simulating Day 1 ---")
+        # จำลองการโหวตตอนกลางวัน: ชาวบ้านพลาดไปโหวต P04 (Charlie) ออก
         print("\n[Action] โหวตตอนกลางวัน...")
-        engine.eliminate_player(villager_ids[1], "ถูกโหวตออกจากหมู่บ้าน")
+        engine.eliminate_player("P04", "ถูกโหวตออกจากหมู่บ้าน")
         
-        # เปลี่ยนเป็นกลางคืนที่ 2
+        # จบช่วงโหวต เปลี่ยนเป็นกลางคืนที่ 2
         engine.next_phase()
         
-        # จำลองคืนที่ 2: หมาป่าฆ่าชาวบ้านคนสุดท้าย
-        print("\n[Action] หมาป่าลงมืออีกครั้ง...")
-        engine.eliminate_player(villager_ids[2], "ถูกหมาป่ากัดในคืนที่ 2")
+        print("\n--- 6. Simulating Night 2 Actions ---")
+        # หมาป่า (P01) เล็งกัด P05
+        engine.execute_night_action(Role.WEREWOLF, "P05")
+        # Seer (P03) ส่อง P01 (เจอว่าเป็นหมาป่า!)
+        engine.execute_night_action(Role.SEER, "P01")
         
-        # เปลี่ยนเป็นกลางวัน (เกมจบ)
-        engine.next_phase()
+        # สรุปผลคืนที่ 2 (เกมควรจะจบและหมาป่าชนะ เพราะเหลือ P01 กับ P03 = 1v1)
+        engine.resolve_night()
 
-        print("\n--- 5. Final Game State JSON (Ready for LLM) ---")
+        print("\n--- 7. Final Game State JSON (Ready for LLM) ---")
         print(engine.state.model_dump_json(indent=2))
         
     except Exception as e:
