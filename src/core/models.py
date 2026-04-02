@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 # ==========================================
@@ -21,6 +21,11 @@ class GamePhase(str, Enum):
 # ==========================================
 # Models: โครงสร้างข้อมูล (Data Schema)
 # ==========================================
+class NightActionState(BaseModel):
+    kill_target: Optional[str] = None    # ID คนที่หมาป่าเลือกฆ่า
+    protect_target: Optional[str] = None # ID คนที่บอดี้การ์ดเลือกคุ้มครอง
+    checked_target: Optional[str] = None # ID คนที่ Seer เลือกส่อง
+
 class Player(BaseModel):
     player_id: str
     name: str
@@ -36,9 +41,10 @@ class GameState(BaseModel):
     current_turn: int = 0  # นับวันที่/คืนที่ เท่าไหร่
     # ใช้ Dict เพื่อให้ค้นหาผู้เล่นด้วย player_id ได้ไวระดับ O(1)
     players: Dict[str, Player] = Field(default_factory=dict)
-    
     # เก็บประวัติเหตุการณ์ที่เกิดขึ้นในแต่ละเทิร์น (เอาไว้ส่งให้ LLM)
     history_log: List[str] = Field(default_factory=list)
+    # เพิ่มส่วนนี้เพื่อเก็บข้อมูล Action ของคืนปัจจุบัน
+    night_actions: NightActionState = Field(default_factory=NightActionState)
 
 # ==========================================
 # ตัวอย่างการใช้งานและแปลงเป็น JSON (เอาไว้เทสต์ดูผลลัพธ์)
