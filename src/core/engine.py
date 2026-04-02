@@ -124,19 +124,20 @@ class GameEngine:
         if self.state.phase == GamePhase.NIGHT:
             self.state.phase = GamePhase.DAY
             self.state.history_log.append(f"Day {self.state.current_turn} begins")
+            
+            # ตรวจสอบเงื่อนไขการชนะหลังจากจบคืน (กลางคืน -> กลางวัน)
+            game_over, message = self.check_win_condition()
+            if game_over:
+                self.state.phase = GamePhase.GAME_OVER
+                self.state.history_log.append(message)
+                print(f"\n{message}")
+                
         elif self.state.phase == GamePhase.DAY:
             self.state.phase = GamePhase.NIGHT
             self.state.current_turn += 1
             self.state.history_log.append(f"Night {self.state.current_turn} begins")
         
         print(f"🔄 Phase changed to: {self.state.phase.value}")
-        
-        # ตรวจสอบเงื่อนไขการชนะหลังจากเปลี่ยนเฟส
-        game_over, message = self.check_win_condition()
-        if game_over:
-            self.state.phase = GamePhase.GAME_OVER
-            self.state.history_log.append(message)
-            print(f"\n{message}")
     
     def eliminate_player(self, player_id: str, reason: str = ""):
         """คัดผู้เล่นออกจากเกม"""
@@ -153,7 +154,7 @@ class GameEngine:
         print(message)
 
     # ==========================================
-    # [WM-14] Execute Night Action (รับค่าจาก Hardware)
+    #  WM-15 [API/Dev] Action Ingestion Endpoints
     # ==========================================
     def execute_night_action(self, actor_role: Role, target_id: str):
         """บันทึกการใช้สกิลของแต่ละบทบาท"""
@@ -189,7 +190,7 @@ class GameEngine:
             return result # คืนค่าให้ Hardware/AI เพื่อบอก Seer
 
     # ==========================================
-    # [WM-15] Night Resolution (สรุปผลตอนเช้า)
+    # WM-16 [Logic] Night Resolution Engine
     # ==========================================
     def resolve_night(self):
         """ประมวลผลลัพธ์ทั้งหมด และเตรียมเข้าสู่ช่วงกลางวัน"""
