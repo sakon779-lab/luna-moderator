@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from src.core.engine import GameEngine
+from src.core.models import GamePhase
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -77,6 +80,136 @@ def map_error_to_schema(error_msg: str) -> dict:
 async def value_error_handler(request: Request, exc: ValueError):
     error_response = map_error_to_schema(str(exc))
     return JSONResponse(status_code=400, content=error_response)
+
+# ==========================================
+#  Game State Management (Multi-Game Support)
+# ==========================================
+class GameManager:
+    """Manager  for multiple game instances"""
+    def __init__(self):
+        self.games = {}  # game_id -> GameEngine
+    
+    def get_game(self, game_id: str) -> GameEngine:
+        """Get existing game or create new one"""
+        if game_id not in self.games:
+            self.games[game_id] = GameEngine(game_id=game_id)
+        return self.games[game_id]
+    
+    def list_games(self) -> dict:
+        """List all active games"""
+        return {
+            game_id: {
+                "phase": engine.state.phase.value,
+                "current_turn": engine.state.current_turn,
+                "players_count": len(engine.state.players)
+            }
+            for game_id, engine in self.games.items()
+        }
+
+# Global GameManager instance
+game_manager = GameManager()
+
+
+# ==========================================
+# 📝 API Models (Schema สำหรับรับข้อมูล Request)
+# ==========================================
+class PlayerRegisterRequest(BaseModel):
+    player_id: str
+    name: str
+    seat_index: int
+
+
+# ==========================================
+# 🚪 Lobby Endpoints
+# ==========================================
+
+@app.post("/api/v1/{game_id}/lobby/register")
+def register_player(game_id: str, request: PlayerRegisterRequest):
+    """ลงทะเบียนผู้เล่นใหม่เข้าสู่ Lobby"""
+    
+    # Get or create game instance
+    engine = game_manager.get_game(game_id)
+    
+    # Pass data to Engine (Global Handler will catch and convert to JSON)
+    engine.register_player(request.player_id, request.name, request.seat_index)
+    
+    return {
+        "status": "success",
+        "data": {
+            "message": "Player registered successfully.",
+            "game_id": game_id,
+            "player_id": request.player_id,
+            "name": request.name,
+            "seat_index": request.seat_index
+        },
+        "error": None
+    }
+
+@app.post("/api/v1/{game_id}/game/start")
+def start_game(game_id: str):
+    """เริ่มเกม: ล็อกห้อง สุ่มบทบาท และเข้าสู่การระบุตัวตนคืนแรก"""
+    
+    # Get game instance
+    engine = game_manager.get_game(game_id)
+    
+    # Start game (if <5 players Global Handler will throw ERR_GAME_002)
+    engine.start_game()
+    
+    # Get expected roles list
+    expected_roles_str = [role.value for role in engine.expected_roles]
+    
+    return {
+        "status": "success",
+        "data": {
+            "message": "Game started successfully. Please proceed to Night 1 identification.",
+            "game_id": game_id,
+            "phase": engine.state.phase.value,
+            "current_turn": engine.state.current_turn,
+            "expected_roles": expected_roles_str
+        },
+        "error": None
+    }
+
+@app.get("/api/v1/{game_id}/game/status")
+def get_game_status(game_id: str):
+    """Get current game status"""
+    
+    # Get game instance
+    engine = game_manager.get_game(game_id)
+    
+    return {
+        "status": "success",
+        "data": {
+            "game_id": game_id,
+            "phase": engine.state.phase.value,
+            "current_turn": engine.state.current_turn,
+            "players_count": len(engine.state.players),
+            "players": [
+                {
+                    "player_id": player_id,
+                    "name": player.name,
+                    "seat_index": player.seat_index,
+                    "role": player.role.value,
+                    "is_alive": player.is_alive
+                }
+                for player_id, player in engine.state.players.items()
+            ]
+        },
+        "error": None
+    }
+
+@app.get("/api/v1/games/list")
+def list_games():
+    """List all active games"""
+    
+    return {
+        "status": "success",
+        "data": {
+            "games": game_manager.list_games(),
+            "total_games": len(game_manager.games)
+        },
+        "error": None
+    }
 
 # ==========================================
 # 🚀 Root Endpoint (เช็คสถานะเซิร์ฟเวอร์)
