@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List
 from src.core.engine import GameEngine
 from src.core.models import GamePhase
 
@@ -118,6 +119,14 @@ class PlayerRegisterRequest(BaseModel):
     name: str
     seat_index: int
 
+class IdentifyRequest(BaseModel):
+    identified_role: str
+    player_ids: List[str]
+
+class ActionRequest(BaseModel):
+    actor_role: str
+    target_id: str
+
 
 # ==========================================
 # 🚪 Lobby Endpoints
@@ -207,6 +216,102 @@ def list_games():
         "data": {
             "games": game_manager.list_games(),
             "total_games": len(game_manager.games)
+        },
+        "error": None
+    }
+
+# ==========================================
+# 🎯 Hardware Endpoints (Night Phase)
+# ==========================================
+
+@app.post("/api/v1/{game_id}/hardware/identify")
+def identify_role(game_id: str, request: IdentifyRequest):
+    """ระบุตัวตนผู้เล่นสำหรับบทบาทต่างๆ (ใช้เฉพาะ Night 1)"""
+    
+    # Get game instance
+    engine = game_manager.get_game(game_id)
+    
+    # Convert string role to Role enum
+    from src.core.models import Role
+    try:
+        identified_role = Role(request.identified_role)
+    except ValueError:
+        raise ValueError(f"❌ บทบาท {request.identified_role} ไม่ถูกต้อง")
+    
+    # Call engine to identify players
+    engine.identify_players_for_role(request.player_ids, identified_role)
+    
+    # Get pending roles
+    pending_roles = engine.get_pending_roles()
+    
+    return {
+        "status": "success",
+        "data": {
+            "identified_role": identified_role.value,
+            "assigned_players": request.player_ids,
+            "pending_roles": pending_roles,
+            "game_id": game_id
+        },
+        "error": None
+    }
+
+@app.post("/api/v1/{game_id}/hardware/action")
+def execute_action(game_id: str, request: ActionRequest):
+    """บันทึกการใช้สกิลของแต่ละบทบาทในช่วงกลางคืน"""
+    
+    # Get game instance
+    engine = game_manager.get_game(game_id)
+    
+    # Convert string role to Role enum
+    from src.core.models import Role
+    try:
+        actor_role = Role(request.actor_role)
+    except ValueError:
+        raise ValueError(f"❌ บทบาท {request.actor_role} ไม่ถูกต้อง")
+    
+    # Execute action and get result (for Seer investigation)
+    result = engine.execute_night_action(actor_role, request.target_id)
+    
+    # Build response
+    response_data = {
+        "message": "Action recorded successfully.",
+        "game_id": game_id
+    }
+    
+    # Add investigation result for Seer only
+    if actor_role == Role.SEER and result:
+        response_data["investigation_result"] = result
+    
+    return {
+        "status": "success",
+        "data": response_data,
+        "error": None
+    }
+
+# ==========================================
+# 🌅 Game Resolution Endpoints
+# ==========================================
+
+@app.post("/api/v1/{game_id}/game/resolve-night")
+def resolve_night_phase(game_id: str):
+    """ประมวลผลเหตุการณ์กลางคืนและเปลี่ยนเป็นช่วงกลางวัน"""
+    
+    # Get game instance
+    engine = game_manager.get_game(game_id)
+    
+    # Conclude first night identification if still in Night 1
+    if engine.state.phase == GamePhase.NIGHT and engine.state.current_turn == 1:
+        engine.conclude_first_night_identification()
+    
+    # Resolve night actions
+    engine.resolve_night()
+    
+    return {
+        "status": "success",
+        "data": {
+            "new_phase": engine.state.phase.value,
+            "current_turn": engine.state.current_turn,
+            "game_id": game_id
         },
         "error": None
     }
